@@ -267,15 +267,15 @@ def get_welcome_inline_keyboard() -> InlineKeyboardMarkup:
             )],
             [InlineKeyboardButton(
                 text="📢 По вопросам рекламы",
-                url="https://t.me/tvoibocc"
+                url="https://t.me/Smoke6745"
             )],
             [InlineKeyboardButton(
                 text="💬 Наш чат",
-                url="https://t.me/ваш_чат"
+                url="https://t.me/+Wcc6CkBVEOM1MmQy"
             )],
             [InlineKeyboardButton(
                 text="📢 Все объявления",
-                url="https://t.me/bh110a"
+                url="https://t.me/BTMSarapul"
             )]
         ]
     )
@@ -304,7 +304,7 @@ def get_channel_post_keyboard() -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(
                     text="Реклама",
-                    url="https://t.me/tvoibocc"
+                    url="https://t.me/Smoke6745"
                 )
             ]
         ]
@@ -465,7 +465,7 @@ async def cmd_start(message: Message):
     welcome_text = (
         "ВНИМАНИЕ!\n"
         "Рекламные посты - платные\n"
-        "по вопросам рекламы обращайтесь - @tvoibocc"
+        "по вопросам рекламы обращайтесь - @Smoke6745"
     )
     
     photo_path = "first.jpg"
@@ -514,7 +514,7 @@ async def check_subscribe_callback(callback: CallbackQuery):
         welcome_text = (
             "ВНИМАНИЕ!\n"
             "Рекламные посты - платные\n"
-            "по вопросам рекламы обращайтесь - @tvoibocc"
+            "по вопросам рекламы обращайтесь - @Smoke6745"
         )
         
         photo_path = "first.jpg"
