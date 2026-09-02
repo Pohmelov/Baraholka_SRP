@@ -298,7 +298,7 @@ def get_channel_post_keyboard() -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(
                     text="Добавить объявление",
-                    url="https://t.me/bh1230bot"
+                    url="https://t.me/Black_things_market_Sarapul_bot"
                 )
             ],
             [
