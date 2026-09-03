@@ -384,9 +384,11 @@ def admin_only():
     return decorator
 
 def get_user_link(user) -> str:
+    """Возвращает ссылку на пользователя (с username или через user_id)"""
     if user.username:
         return f"@{user.username}"
-    return user.full_name
+    # Если нет username, создаем ссылку через ID
+    return f'<a href="tg://user?id={user.id}">{user.full_name}</a>'
 
 # ========== УСТАНОВКА КОМАНД ДЛЯ МЕНЮ ==========
 
@@ -401,13 +403,13 @@ async def set_commands():
 
 # ========== ФУНКЦИЯ ПОКАЗА ПРЕДПРОСМОТРА ==========
 
-def format_ad_text(category: str, description: str, price: str, author: str) -> str:
+def format_ad_text(category: str, description: str, price: str, author_link: str) -> str:
     """Форматирует текст объявления в нужном стиле"""
     return (
         f"• <b>Категория</b>: {category}\n"
         f"• <b>Описание товара</b>:\n{description}\n"
         f"<b>Цена</b>: {price} ₽\n"
-        f"<b>Отправитель</b>: {author}"
+        f"<b>Отправитель</b>: {author_link}"
     )
 
 async def show_preview(message: Message, state: FSMContext):
@@ -418,10 +420,10 @@ async def show_preview(message: Message, state: FSMContext):
     description = data.get("description")
     price = data.get("price")
     
-    author = get_user_link(message.from_user)
+    author_link = get_user_link(message.from_user)
     
     # Текст предпросмотра
-    preview_text = format_ad_text(category, description, price, author)
+    preview_text = format_ad_text(category, description, price, author_link)
     
     # Удаляем старую клавиатуру
     await message.answer(
@@ -991,10 +993,10 @@ async def publish_ad(callback: CallbackQuery, state: FSMContext):
     photo = data.get("photo")
     description = data.get("description")
     price = data.get("price")
-    author = get_user_link(callback.from_user)
+    author_link = get_user_link(callback.from_user)
     
     # Текст объявления
-    ad_text = format_ad_text(category, description, price, author)
+    ad_text = format_ad_text(category, description, price, author_link)
     
     try:
         if photo:
