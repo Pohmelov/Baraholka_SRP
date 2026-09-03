@@ -115,6 +115,14 @@ class Database:
                     cursor.execute("ALTER TABLE clicks ADD COLUMN clicked_at INTEGER")
                     logger.info("Добавлена колонка clicked_at в таблицу clicks")
             
+            # СОЗДАЕМ ТАБЛИЦУ НАСТРОЕК
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
+                )
+            """)
+            
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_clicks_user_id ON clicks(user_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_clicks_button_type ON clicks(button_type)")
             
@@ -180,6 +188,42 @@ class Database:
                 return [dict(row) for row in cursor.fetchall()]
             except sqlite3.OperationalError:
                 return []
+    
+    # ========== МЕТОДЫ ДЛЯ НАСТРОЕК ==========
+    def get_setting(self, key: str, default: str = None) -> str:
+        """Получить настройку из БД"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
+            result = cursor.fetchone()
+            return result[0] if result else default
+    
+    def set_setting(self, key: str, value: str):
+        """Установить настройку в БД"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                (key, value)
+            )
+            conn.commit()
+    
+    def get_bot_mention_enabled(self) -> bool:
+        """Получить настройку упоминания бота"""
+        value = self.get_setting("bot_mention_enabled", "False")
+        return value.lower() == "true"
+    
+    def set_bot_mention_enabled(self, enabled: bool):
+        """Установить настройку упоминания бота"""
+        self.set_setting("bot_mention_enabled", str(enabled))
+    
+    def get_bot_mention_text(self) -> str:
+        """Получить текст для упоминания"""
+        return self.get_setting("bot_mention_text", "@Sarapul_Shopbot")
+    
+    def set_bot_mention_text(self, text: str):
+        """Установить текст для упоминания"""
+        self.set_setting("bot_mention_text", text)
 
 db = Database()
 
@@ -206,34 +250,35 @@ class BroadcastForm(StatesGroup):
     media = State()
     text = State()
 
+# НОВОЕ СОСТОЯНИЕ ДЛЯ ВВОДА ССЫЛКИ
+class MentionForm(StatesGroup):
+    waiting_for_text = State()
+
 # ========== КЛАВИАТУРЫ ==========
 
 photo_done_keyboard = ReplyKeyboardMarkup(
-    keyboard=[[KeyboardButton(text="✅ Готово")]],
+    keyboard=[[KeyboardButton(text="Готово")]],
     resize_keyboard=True
 )
 
 main_keyboard = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="📝 Предложить пост/товар")]
+        [KeyboardButton(text="Предложить пост/товар")]
     ],
     resize_keyboard=True
 )
 
+# АДМИН-КЛАВИАТУРА С КНОПКОЙ УПОМИНАНИЯ
 admin_keyboard = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="📝 Предложить пост/товар")],
-        [KeyboardButton(text="📊 Статистика")],
-        [KeyboardButton(text="📨 Рассылка")],
-        [KeyboardButton(text="🔄 Перезагрузить бота")],
-        [KeyboardButton(text="🔴 Выключить бота"), KeyboardButton(text="🟢 Включить бота")],
-        [KeyboardButton(text="◀️ Выйти из админки")]
+        [KeyboardButton(text="Предложить пост/товар")],
+        [KeyboardButton(text="Статистика")],
+        [KeyboardButton(text="Рассылка")],
+        [KeyboardButton(text="Перезагрузить бота")],
+        [KeyboardButton(text="Выключить бота"), KeyboardButton(text="Включить бота")],
+        [KeyboardButton(text="Упоминание: ВЫКЛ"), KeyboardButton(text="Выйти из админки")],
+        [KeyboardButton(text="Изменить текст упоминания")]
     ],
-    resize_keyboard=True
-)
-
-cancel_keyboard = ReplyKeyboardMarkup(
-    keyboard=[[KeyboardButton(text="❌ Отмена")]],
     resize_keyboard=True
 )
 
@@ -241,7 +286,7 @@ broadcast_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="Только текст")],
         [KeyboardButton(text="Текст + фото")],
-        [KeyboardButton(text="❌ Отмена")]
+        [KeyboardButton(text="Отмена")]
     ],
     resize_keyboard=True
 )
@@ -262,19 +307,19 @@ def get_welcome_inline_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(
-                text="📝 Предложить пост/товар",
+                text="Предложить пост/товар",
                 callback_data="create_ad"
             )],
             [InlineKeyboardButton(
-                text="📢 По вопросам рекламы",
+                text="По вопросам рекламы",
                 url="https://t.me/Smoke6745"
             )],
             [InlineKeyboardButton(
-                text="💬 Наш чат",
+                text="Наш чат",
                 url="https://t.me/+Wcc6CkBVEOM1MmQy"
             )],
             [InlineKeyboardButton(
-                text="📢 Все объявления",
+                text="Все объявления",
                 url="https://t.me/BTMSarapul"
             )]
         ]
@@ -284,10 +329,10 @@ def get_subscribe_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(
-                text="📢 Подписаться на канал", 
+                text="Подписаться на канал", 
                 url=f"https://t.me/{CHANNEL_ID.replace('@', '')}"
             )],
-            [InlineKeyboardButton(text="✅ Проверить подписку", callback_data="check_subscribe")]
+            [InlineKeyboardButton(text="Проверить подписку", callback_data="check_subscribe")]
         ]
     )
 
@@ -314,9 +359,10 @@ def get_preview_keyboard() -> InlineKeyboardMarkup:
     """Клавиатура для предпросмотра объявления"""
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Опубликовать", callback_data="publish_ad")],
-            [InlineKeyboardButton(text="✏️ Изменить", callback_data="edit_ad")],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_ad")]
+            [InlineKeyboardButton(text="Изменить фото", callback_data="edit_photos")],
+            [InlineKeyboardButton(text="Изменить описание", callback_data="edit_description")],
+            [InlineKeyboardButton(text="Изменить цену", callback_data="edit_price")],
+            [InlineKeyboardButton(text="Опубликовать", callback_data="publish_ad")]
         ]
     )
 
@@ -324,11 +370,11 @@ def get_edit_options_keyboard() -> InlineKeyboardMarkup:
     """Клавиатура для выбора что изменить"""
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="📁 Категория", callback_data="edit_category")],
-            [InlineKeyboardButton(text="📸 Фото", callback_data="edit_photos")],
-            [InlineKeyboardButton(text="📝 Описание", callback_data="edit_description")],
-            [InlineKeyboardButton(text="💰 Цена", callback_data="edit_price")],
-            [InlineKeyboardButton(text="◀️ Назад к предпросмотру", callback_data="back_to_preview")]
+            [InlineKeyboardButton(text="Категория", callback_data="edit_category")],
+            [InlineKeyboardButton(text="Фото", callback_data="edit_photos")],
+            [InlineKeyboardButton(text="Описание", callback_data="edit_description")],
+            [InlineKeyboardButton(text="Цена", callback_data="edit_price")],
+            [InlineKeyboardButton(text="Назад к предпросмотру", callback_data="back_to_preview")]
         ]
     )
 
@@ -355,15 +401,15 @@ def require_subscription():
         async def wrapper(message: Message, *args, **kwargs):
             global bot_running
             if not bot_running:
-                await message.answer("⛔ Бот временно отключен администратором. Попробуйте позже.")
+                await message.answer("Бот временно отключен администратором. Попробуйте позже.")
                 return
             
             if await check_subscription(message.from_user.id):
                 return await func(message, *args, **kwargs)
             else:
                 await message.answer(
-                    "❌ Для использования бота необходимо подписаться на наш канал!\n\n"
-                    "Подпишись и нажми '✅ Проверить подписку'.",
+                    "Для использования бота необходимо подписаться на наш канал.\n\n"
+                    "Подпишись и нажми 'Проверить подписку'.",
                     reply_markup=get_subscribe_keyboard()
                 )
         return wrapper
@@ -375,7 +421,7 @@ def admin_only():
         async def wrapper(message: Message, *args, **kwargs):
             if not is_admin(message.from_user.id):
                 await message.answer(
-                    "⛔ Эта функция доступна только администратору.",
+                    "Эта функция доступна только администратору.",
                     reply_markup=main_keyboard
                 )
                 return
@@ -412,7 +458,7 @@ def format_ad_text(category: str, description: str, price: str, author_link: str
         f"<b>Отправитель</b>: {author_link}"
     )
 
-async def show_preview(message: Message, state: FSMContext):
+async def show_preview(message: Message, state: FSMContext, delete_previous: bool = True):
     """Показывает предпросмотр объявления с кнопками"""
     data = await state.get_data()
     category = data.get("category")
@@ -425,27 +471,23 @@ async def show_preview(message: Message, state: FSMContext):
     # Текст предпросмотра
     preview_text = format_ad_text(category, description, price, author_link)
     
-    # Удаляем старую клавиатуру
-    await message.answer(
-        "✅ Данные сохранены! Вот как будет выглядеть твоё объявление:",
-        reply_markup=ReplyKeyboardRemove()
-    )
-    
-    # Показываем предпросмотр с кнопками
+    # Показываем предпросмотр с кнопками (без лишнего сообщения)
     if photo:
-        await message.answer_photo(
+        sent_msg = await message.answer_photo(
             photo=photo,
             caption=preview_text,
             parse_mode="HTML",
             reply_markup=get_preview_keyboard()
         )
     else:
-        await message.answer(
+        sent_msg = await message.answer(
             preview_text,
             parse_mode="HTML",
             reply_markup=get_preview_keyboard()
         )
     
+    # Сохраняем ID сообщения с предпросмотром для удаления
+    await state.update_data(preview_message_id=sent_msg.message_id)
     await state.set_state(AdForm.preview)
 
 # ========== КОМАНДА /START ==========
@@ -458,8 +500,8 @@ async def cmd_start(message: Message):
     
     if not await check_subscription(user.id):
         await message.answer(
-            "👋 Привет! Для использования бота необходимо подписаться на наш канал.\n\n"
-            "Подпишись и нажми '✅ Проверить подписку'.",
+            "Привет! Для использования бота необходимо подписаться на наш канал.\n\n"
+            "Подпишись и нажми 'Проверить подписку'.",
             reply_markup=get_subscribe_keyboard()
         )
         return
@@ -474,27 +516,29 @@ async def cmd_start(message: Message):
     if not os.path.exists(photo_path):
         logger.warning(f"Файл {photo_path} не найден!")
         if is_admin(user.id):
-            await message.answer(welcome_text, reply_markup=admin_keyboard)
+            admin_keyboard_updated = get_admin_keyboard()
+            await message.answer(welcome_text, reply_markup=admin_keyboard_updated)
         else:
             if not bot_running:
-                await message.answer("⛔ Бот временно отключен администратором. Попробуйте позже.", reply_markup=main_keyboard)
+                await message.answer("Бот временно отключен администратором. Попробуйте позже.", reply_markup=main_keyboard)
                 return
             await message.answer(welcome_text, reply_markup=main_keyboard)
         return
     
     if is_admin(user.id):
+        admin_keyboard_updated = get_admin_keyboard()
         await message.answer_photo(
             photo=FSInputFile(photo_path),
             caption=welcome_text,
             reply_markup=get_welcome_inline_keyboard()
         )
         await message.answer(
-            "👋 Добро пожаловать в админ-панель!",
-            reply_markup=admin_keyboard
+            "Добро пожаловать в админ-панель!",
+            reply_markup=admin_keyboard_updated
         )
     else:
         if not bot_running:
-            await message.answer("⛔ Бот временно отключен администратором. Попробуйте позже.", reply_markup=main_keyboard)
+            await message.answer("Бот временно отключен администратором. Попробуйте позже.", reply_markup=main_keyboard)
             return
         
         await message.answer_photo(
@@ -522,19 +566,20 @@ async def check_subscribe_callback(callback: CallbackQuery):
         photo_path = "first.jpg"
         if os.path.exists(photo_path):
             if is_admin(user_id):
+                admin_keyboard_updated = get_admin_keyboard()
                 await callback.message.answer_photo(
                     photo=FSInputFile(photo_path),
                     caption=welcome_text,
                     reply_markup=get_welcome_inline_keyboard()
                 )
                 await callback.message.answer(
-                    "👋 Добро пожаловать в админ-панель!",
-                    reply_markup=admin_keyboard
+                    "Добро пожаловать в админ-панель!",
+                    reply_markup=admin_keyboard_updated
                 )
             else:
                 if not bot_running:
                     await callback.message.answer(
-                        "⛔ Бот временно отключен администратором. Попробуйте позже.",
+                        "Бот временно отключен администратором. Попробуйте позже.",
                         reply_markup=main_keyboard
                     )
                 else:
@@ -545,115 +590,218 @@ async def check_subscribe_callback(callback: CallbackQuery):
                     )
         else:
             if is_admin(user_id):
-                await callback.message.answer(welcome_text, reply_markup=admin_keyboard)
+                admin_keyboard_updated = get_admin_keyboard()
+                await callback.message.answer(welcome_text, reply_markup=admin_keyboard_updated)
             else:
                 if not bot_running:
-                    await callback.message.answer("⛔ Бот временно отключен администратором. Попробуйте позже.", reply_markup=main_keyboard)
+                    await callback.message.answer("Бот временно отключен администратором. Попробуйте позже.", reply_markup=main_keyboard)
                 else:
                     await callback.message.answer(welcome_text, reply_markup=main_keyboard)
         await callback.answer()
     else:
-        await callback.answer("❌ Ты ещё не подписан на канал!", show_alert=True)
+        await callback.answer("Ты ещё не подписан на канал!", show_alert=True)
+
+# ========== ФУНКЦИЯ ДЛЯ ОБНОВЛЕНИЯ АДМИН-КЛАВИАТУРЫ ==========
+
+def get_admin_keyboard():
+    """Возвращает обновленную админ-клавиатуру с текущим состоянием упоминания"""
+    mention_enabled = db.get_bot_mention_enabled()
+    mention_text = "ВКЛ" if mention_enabled else "ВЫКЛ"
+    current_mention = db.get_bot_mention_text()
+    
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="Предложить пост/товар")],
+            [KeyboardButton(text="Статистика")],
+            [KeyboardButton(text="Рассылка")],
+            [KeyboardButton(text="Перезагрузить бота")],
+            [KeyboardButton(text="Выключить бота"), KeyboardButton(text="Включить бота")],
+            [KeyboardButton(text=f"Упоминание: {mention_text}"), KeyboardButton(text="Выйти из админки")],
+            [KeyboardButton(text="Изменить текст упоминания")]
+        ],
+        resize_keyboard=True
+    )
 
 # ========== КОМАНДА /CANCEL ==========
 
 @dp.message(Command("cancel"))
-@dp.message(F.text == "❌ Отмена")
 async def cmd_cancel(message: Message, state: FSMContext):
     current_state = await state.get_state()
     
-    if current_state in [AdForm.preview, AdForm.edit_choice, AdForm.edit_category, AdForm.edit_description, AdForm.edit_price, AdForm.edit_photo]:
+    # Если мы в состоянии ввода упоминания - выходим
+    if current_state == MentionForm.waiting_for_text:
         await state.clear()
-        keyboard = admin_keyboard if is_admin(message.from_user.id) else main_keyboard
         await message.answer(
-            "❌ Действие отменено.",
-            reply_markup=keyboard
+            "Изменение текста упоминания отменено.",
+            reply_markup=get_admin_keyboard()
         )
         return
     
+    # Удаляем сообщение с предпросмотром если оно есть
+    data = await state.get_data()
+    preview_msg_id = data.get("preview_message_id")
+    if preview_msg_id:
+        try:
+            await message.bot.delete_message(message.chat.id, preview_msg_id)
+        except:
+            pass
+    
     await state.clear()
-    keyboard = admin_keyboard if is_admin(message.from_user.id) else main_keyboard
+    keyboard = get_admin_keyboard() if is_admin(message.from_user.id) else main_keyboard
     await message.answer(
-        "❌ Действие отменено.",
+        "Действие отменено.",
         reply_markup=keyboard
     )
 
 # ========== УПРАВЛЕНИЕ БОТОМ (ТОЛЬКО ДЛЯ АДМИНОВ) ==========
 
-@dp.message(F.text == "🔄 Перезагрузить бота")
+@dp.message(F.text == "Перезагрузить бота")
 @admin_only()
 async def restart_bot(message: Message):
     await message.answer(
-        "🔄 Перезагрузка бота...\n\n"
+        "Перезагрузка бота...\n\n"
         "Бот будет перезапущен через несколько секунд.",
-        reply_markup=admin_keyboard
+        reply_markup=get_admin_keyboard()
     )
     logger.info(f"Бот перезагружается по команде администратора {message.from_user.id}")
     
     await asyncio.sleep(2)
     os.execv(sys.executable, ['python'] + sys.argv)
 
-@dp.message(F.text == "🔴 Выключить бота")
+@dp.message(F.text == "Выключить бота")
 @admin_only()
 async def disable_bot(message: Message):
     global bot_running
     if not bot_running:
-        await message.answer("ℹ️ Бот уже выключен.", reply_markup=admin_keyboard)
+        await message.answer("Бот уже выключен.", reply_markup=get_admin_keyboard())
         return
     
     bot_running = False
     await message.answer(
-        "🔴 Бот выключен!\n\n"
+        "Бот выключен!\n\n"
         "Теперь бот не будет отвечать пользователям.\n"
-        "Чтобы включить, нажми '🟢 Включить бота'.",
-        reply_markup=admin_keyboard
+        "Чтобы включить, нажми 'Включить бота'.",
+        reply_markup=get_admin_keyboard()
     )
     logger.warning(f"Бот выключен администратором {message.from_user.id}")
 
-@dp.message(F.text == "🟢 Включить бота")
+@dp.message(F.text == "Включить бота")
 @admin_only()
 async def enable_bot(message: Message):
     global bot_running
     if bot_running:
-        await message.answer("ℹ️ Бот уже включен.", reply_markup=admin_keyboard)
+        await message.answer("Бот уже включен.", reply_markup=get_admin_keyboard())
         return
     
     bot_running = True
     await message.answer(
-        "🟢 Бот включен!\n\n"
+        "Бот включен!\n\n"
         "Теперь бот снова отвечает пользователям.",
-        reply_markup=admin_keyboard
+        reply_markup=get_admin_keyboard()
     )
     logger.info(f"Бот включен администратором {message.from_user.id}")
 
+# ========== ОБРАБОТЧИК УПОМИНАНИЯ БОТА ==========
+
+@dp.message(F.text == "Изменить текст упоминания")
+@admin_only()
+async def change_mention_text(message: Message, state: FSMContext):
+    """Изменение текста упоминания"""
+    current_text = db.get_bot_mention_text()
+    await state.set_state(MentionForm.waiting_for_text)
+    await message.answer(
+        f"Текущий текст упоминания:\n{current_text}\n\n"
+        "Введите новый текст, который будет добавляться в конец объявления.\n"
+        "Это может быть ссылка на бота, канал или любой другой текст.\n\n"
+        "Примеры:\n"
+        "@Sarapul_Shopbot\n"
+        "t.me/Sarapul_Shopbot\n"
+        "Наш бот: @Sarapul_Shopbot\n\n"
+        "Для отмены напишите /cancel"
+    )
+
+@dp.message(StateFilter(MentionForm.waiting_for_text), F.text)
+@admin_only()
+async def process_new_mention_text(message: Message, state: FSMContext):
+    """Сохранение нового текста упоминания"""
+    new_text = message.text.strip()
+    
+    if not new_text:
+        await message.answer("Текст не может быть пустым! Попробуйте снова или напишите /cancel")
+        return
+    
+    # Сохраняем новый текст
+    db.set_bot_mention_text(new_text)
+    
+    # Если упоминание было выключено - включаем его автоматически
+    if not db.get_bot_mention_enabled():
+        db.set_bot_mention_enabled(True)
+        await message.answer(
+            f"Новый текст упоминания сохранен:\n{new_text}\n\n"
+            "Упоминание автоматически включено!",
+            reply_markup=get_admin_keyboard()
+        )
+    else:
+        await message.answer(
+            f"Новый текст упоминания сохранен:\n{new_text}",
+            reply_markup=get_admin_keyboard()
+        )
+    
+    await state.clear()
+    logger.info(f"Администратор {message.from_user.id} изменил текст упоминания на: {new_text}")
+
+@dp.message(F.text.startswith("Упоминание:"))
+@admin_only()
+async def toggle_bot_mention(message: Message):
+    """Переключение упоминания бота в объявлениях"""
+    current = db.get_bot_mention_enabled()
+    new_value = not current
+    db.set_bot_mention_enabled(new_value)
+    
+    mention_text = "ВКЛ" if new_value else "ВЫКЛ"
+    current_mention = db.get_bot_mention_text()
+    
+    if new_value:
+        await message.answer(
+            f"Упоминание включено!\n"
+            f"Текст упоминания: {current_mention}",
+            reply_markup=get_admin_keyboard()
+        )
+    else:
+        await message.answer(
+            "Упоминание выключено!",
+            reply_markup=get_admin_keyboard()
+        )
+    logger.info(f"Упоминание изменено на {mention_text} администратором {message.from_user.id}")
+
 # ========== АДМИН-ПАНЕЛЬ (ТОЛЬКО ДЛЯ АДМИНОВ) ==========
 
-@dp.message(F.text == "◀️ Выйти из админки")
+@dp.message(F.text == "Выйти из админки")
 @admin_only()
 async def exit_admin(message: Message):
     exit_keyboard = ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="📝 Предложить пост/товар")],
-            [KeyboardButton(text="⚙️ Войти в админку")]
+            [KeyboardButton(text="Предложить пост/товар")],
+            [KeyboardButton(text="Войти в админку")]
         ],
         resize_keyboard=True
     )
     await message.answer(
         "Вы вышли из админ-панели.\n\n"
-        "Чтобы вернуться в админку, нажми '⚙️ Войти в админку'.",
+        "Чтобы вернуться в админку, нажми 'Войти в админку'.",
         reply_markup=exit_keyboard
     )
 
-@dp.message(F.text == "⚙️ Войти в админку")
+@dp.message(F.text == "Войти в админку")
 @admin_only()
 async def enter_admin(message: Message):
     await message.answer(
-        "👋 Добро пожаловать в админ-панель!\n\n"
+        "Добро пожаловать в админ-панель!\n\n"
         "Выберите действие:",
-        reply_markup=admin_keyboard
+        reply_markup=get_admin_keyboard()
     )
 
-@dp.message(F.text == "📊 Статистика")
+@dp.message(F.text == "Статистика")
 @dp.message(Command("stats"))
 @admin_only()
 async def admin_stats(message: Message):
@@ -667,30 +815,30 @@ async def admin_stats(message: Message):
         
         adv_details = ""
         if adv_stats:
-            adv_details = "\n\n📊 Детали по рекламным кнопкам:"
+            adv_details = "\n\nДетали по рекламным кнопкам:"
             for stat in adv_stats:
                 label = stat.get('button_label', 'Без названия') or "Без названия"
                 adv_details += f"\n• {label}: {stat['count']} переходов"
         
         await message.answer(
-            f"📊 Статистика бота:\n\n"
-            f"👥 Всего пользователей: {users_count}\n"
-            f"🔄 Всего переходов: {total_clicks}\n\n"
-            f"🤖 Переходов на бота: {bot_clicks}\n"
-            f"📢 Переходов на рекламу: {adv_clicks}"
+            f"Статистика бота:\n\n"
+            f"Всего пользователей: {users_count}\n"
+            f"Всего переходов: {total_clicks}\n\n"
+            f"Переходов на бота: {bot_clicks}\n"
+            f"Переходов на рекламу: {adv_clicks}"
             f"{adv_details}",
-            reply_markup=admin_keyboard
+            reply_markup=get_admin_keyboard()
         )
     except Exception as e:
         logger.error(f"Ошибка при получении статистики: {e}")
         await message.answer(
-            "❌ Ошибка при получении статистики. Пожалуйста, попробуйте позже.",
-            reply_markup=admin_keyboard
+            "Ошибка при получении статистики. Пожалуйста, попробуйте позже.",
+            reply_markup=get_admin_keyboard()
         )
 
 # ========== РАССЫЛКА (ТОЛЬКО ДЛЯ АДМИНОВ) ==========
 
-@dp.message(F.text == "📨 Рассылка")
+@dp.message(F.text == "Рассылка")
 @dp.message(Command("broadcast"))
 @admin_only()
 async def admin_broadcast(message: Message, state: FSMContext):
@@ -702,19 +850,19 @@ async def admin_broadcast(message: Message, state: FSMContext):
 async def process_broadcast_type(message: Message, state: FSMContext):
     choice = message.text
     
-    if choice == "❌ Отмена":
+    if choice == "Отмена":
         await state.clear()
-        await message.answer("Рассылка отменена.", reply_markup=admin_keyboard)
+        await message.answer("Рассылка отменена.", reply_markup=get_admin_keyboard())
         return
     
     if choice == "Только текст":
         await state.update_data(media_type="text")
         await state.set_state(BroadcastForm.text)
-        await message.answer("Введите текст для рассылки:", reply_markup=cancel_keyboard)
+        await message.answer("Введите текст для рассылки:")
     elif choice == "Текст + фото":
         await state.update_data(media_type="photo")
         await state.set_state(BroadcastForm.media)
-        await message.answer("Отправьте фото для рассылки:", reply_markup=cancel_keyboard)
+        await message.answer("Отправьте фото для рассылки:")
     else:
         await message.answer("Пожалуйста, выберите тип рассылки:", reply_markup=broadcast_keyboard)
 
@@ -724,7 +872,7 @@ async def process_broadcast_photo(message: Message, state: FSMContext):
     photo = message.photo[-1]
     await state.update_data(media_file_id=photo.file_id)
     await state.set_state(BroadcastForm.text)
-    await message.answer("Фото принято! Теперь введите текст для рассылки:", reply_markup=cancel_keyboard)
+    await message.answer("Фото принято! Теперь введите текст для рассылки:")
 
 @dp.message(StateFilter(BroadcastForm.media))
 @admin_only()
@@ -794,7 +942,7 @@ async def process_broadcast_text(message: Message, state: FSMContext):
         f"Не доставлено: {failed}\n"
         f"Всего пользователей: {total}\n"
         f"Тип рассылки: {'Текст + фото' if media_type == 'photo' else 'Только текст'}",
-        reply_markup=admin_keyboard
+        reply_markup=get_admin_keyboard()
     )
     await state.clear()
 
@@ -810,43 +958,37 @@ async def broadcast_text_error(message: Message):
 async def create_ad_callback(callback: CallbackQuery, state: FSMContext):
     global bot_running
     if not bot_running:
-        await callback.answer("⛔ Бот временно отключен", show_alert=True)
+        await callback.answer("Бот временно отключен", show_alert=True)
         return
     
     await callback.answer()
     await state.set_state(AdForm.category)
     await state.update_data(photo=None)
     
-    await callback.message.answer(
-        "Выбери категорию:",
+    sent_msg = await callback.message.answer(
+        "Укажите категорию товара",
         reply_markup=category_keyboard
     )
-    await callback.message.answer(
-        "Чтобы отменить, нажми кнопку ниже или используй команду /cancel в меню:",
-        reply_markup=cancel_keyboard
-    )
+    await state.update_data(category_msg_id=sent_msg.message_id)
 
 # ========== ОБРАБОТЧИКИ КНОПОК ==========
 
-@dp.message(F.text == "📝 Предложить пост/товар")
+@dp.message(F.text == "Предложить пост/товар")
 @require_subscription()
 async def start_ad_creation(message: Message, state: FSMContext):
     global bot_running
     if not bot_running:
-        await message.answer("⛔ Бот временно отключен администратором. Попробуйте позже.")
+        await message.answer("Бот временно отключен администратором. Попробуйте позже.")
         return
     
     await state.set_state(AdForm.category)
     await state.update_data(photo=None)
     
-    await message.answer(
-        "Выбери категорию:",
+    sent_msg = await message.answer(
+        "Укажите категорию товара",
         reply_markup=category_keyboard
     )
-    await message.answer(
-        "Чтобы отменить, нажми кнопку ниже или используй команду /cancel в меню:",
-        reply_markup=cancel_keyboard
-    )
+    await state.update_data(category_msg_id=sent_msg.message_id)
 
 # ========== СОЗДАНИЕ ОБЪЯВЛЕНИЯ ==========
 
@@ -854,7 +996,7 @@ async def start_ad_creation(message: Message, state: FSMContext):
 async def process_category(callback: CallbackQuery, state: FSMContext):
     global bot_running
     if not bot_running:
-        await callback.answer("⛔ Бот временно отключен", show_alert=True)
+        await callback.answer("Бот временно отключен", show_alert=True)
         return
     
     if not await check_subscription(callback.from_user.id):
@@ -864,11 +1006,24 @@ async def process_category(callback: CallbackQuery, state: FSMContext):
     category = callback.data.replace("cat_", "")
     await state.update_data(category=category)
     
-    await callback.message.delete()
+    # Удаляем сообщение с выбором категории
+    data = await state.get_data()
+    category_msg_id = data.get("category_msg_id")
+    if category_msg_id:
+        try:
+            await callback.message.bot.delete_message(callback.message.chat.id, category_msg_id)
+        except:
+            pass
+        await state.update_data(category_msg_id=None)
+    
+    # Удаляем сообщение с callback
+    try:
+        await callback.message.delete()
+    except:
+        pass
+    
     await callback.message.answer(
-        f"Категория: {category}\n\n"
-        "Отправь фото товара.",
-        reply_markup=cancel_keyboard
+        "Отправьте одну фотографию товара, для отмены напишите /cancel"
     )
     await state.set_state(AdForm.photo)
     await callback.answer()
@@ -877,7 +1032,7 @@ async def process_category(callback: CallbackQuery, state: FSMContext):
 async def process_photo(message: Message, state: FSMContext):
     global bot_running
     if not bot_running:
-        await message.answer("⛔ Бот временно отключен администратором. Попробуйте позже.")
+        await message.answer("Бот временно отключен администратором. Попробуйте позже.")
         return
     
     if not await check_subscription(message.from_user.id):
@@ -887,52 +1042,40 @@ async def process_photo(message: Message, state: FSMContext):
     photo = message.photo[-1]
     await state.update_data(photo=photo.file_id)
     
-    await message.answer(
-        "✅ Фото принято!",
-        reply_markup=cancel_keyboard
-    )
+    # Сразу переходим к запросу описания без лишних сообщений
     await state.set_state(AdForm.description)
     await message.answer(
-        "Теперь напиши описание товара.\n"
-        "Чтобы отменить, используй /cancel в меню.",
-        reply_markup=cancel_keyboard
+        "Введите описание товара, для отмены напишите /cancel"
     )
 
 @dp.message(StateFilter(AdForm.photo))
 async def photo_error(message: Message):
     await message.answer(
-        "Пожалуйста, отправь фото.\n"
-        "Чтобы отменить, используй /cancel в меню.",
-        reply_markup=cancel_keyboard
+        "Пожалуйста, отправьте фото.\nДля отмены напишите /cancel"
     )
 
 @dp.message(StateFilter(AdForm.description), F.text)
 async def process_description(message: Message, state: FSMContext):
     if len(message.text) > 400:
         await message.answer(
-            f"❌ Слишком длинное описание! Максимум 400 символов.\n"
+            f"Слишком длинное описание! Максимум 400 символов.\n"
             f"Сейчас: {len(message.text)} символов.\n"
-            "Пожалуйста, сократи описание.\n"
-            "Чтобы отменить, используй /cancel в меню.",
-            reply_markup=cancel_keyboard
+            "Пожалуйста, сократите описание.\nДля отмены напишите /cancel"
         )
         return
     
     await state.update_data(description=message.text)
+    
+    # Сразу переходим к запросу цены без лишних сообщений
     await message.answer(
-        "✅ Описание сохранено!\n\n"
-        "Теперь укажи цену товара (только цифры).\n"
-        "Чтобы отменить, используй /cancel в меню.",
-        reply_markup=cancel_keyboard
+        "Введите цену товара, для отмены напишите /cancel"
     )
     await state.set_state(AdForm.price)
 
 @dp.message(StateFilter(AdForm.description))
 async def description_error(message: Message):
     await message.answer(
-        "Пожалуйста, напиши текстовое описание.\n"
-        "Чтобы отменить, используй /cancel в меню.",
-        reply_markup=cancel_keyboard
+        "Пожалуйста, напишите текстовое описание.\nДля отмены напишите /cancel"
     )
 
 # ========== ОБРАБОТЧИК ЦЕНЫ ==========
@@ -941,7 +1084,7 @@ async def description_error(message: Message):
 async def process_price(message: Message, state: FSMContext):
     global bot_running
     if not bot_running:
-        await message.answer("⛔ Бот временно отключен администратором. Попробуйте позже.")
+        await message.answer("Бот временно отключен администратором. Попробуйте позже.")
         return
     
     if not await check_subscription(message.from_user.id):
@@ -952,29 +1095,23 @@ async def process_price(message: Message, state: FSMContext):
     
     if not price.isdigit():
         await message.answer(
-            "❌ Цена должна содержать только цифры!\n"
-            "Пожалуйста, введи цену правильно (например: 1000, 2500).\n"
-            "Чтобы отменить, используй /cancel в меню.",
-            reply_markup=cancel_keyboard
+            "Цена должна содержать только цифры!\n"
+            "Пожалуйста, введите цену правильно (например: 1000, 2500).\nДля отмены напишите /cancel"
         )
         return
     
     if len(price) > 10:
         await message.answer(
-            f"❌ Цена слишком большая! Максимум 10 цифр.\n"
+            f"Цена слишком большая! Максимум 10 цифр.\n"
             f"Сейчас: {len(price)} цифр.\n"
-            "Пожалуйста, введи цену до 10 цифр.\n"
-            "Чтобы отменить, используй /cancel в меню.",
-            reply_markup=cancel_keyboard
+            "Пожалуйста, введите цену до 10 цифр.\nДля отмены напишите /cancel"
         )
         return
     
     if int(price) <= 0:
         await message.answer(
-            "❌ Цена должна быть больше 0!\n"
-            "Пожалуйста, введи корректную цену.\n"
-            "Чтобы отменить, используй /cancel в меню.",
-            reply_markup=cancel_keyboard
+            "Цена должна быть больше 0!\n"
+            "Пожалуйста, введите корректную цену.\nДля отмены напишите /cancel"
         )
         return
     
@@ -998,6 +1135,11 @@ async def publish_ad(callback: CallbackQuery, state: FSMContext):
     # Текст объявления
     ad_text = format_ad_text(category, description, price, author_link)
     
+    # ПРОВЕРЯЕМ НАСТРОЙКУ УПОМИНАНИЯ
+    if db.get_bot_mention_enabled():
+        mention_text = db.get_bot_mention_text()
+        ad_text += f"\n\n{mention_text}"
+    
     try:
         if photo:
             await bot.send_photo(
@@ -1015,7 +1157,7 @@ async def publish_ad(callback: CallbackQuery, state: FSMContext):
                 reply_markup=get_channel_post_keyboard()
             )
         
-        keyboard = admin_keyboard if is_admin(callback.from_user.id) else main_keyboard
+        keyboard = get_admin_keyboard() if is_admin(callback.from_user.id) else main_keyboard
         
         # Удаляем сообщение с предпросмотром
         try:
@@ -1024,8 +1166,7 @@ async def publish_ad(callback: CallbackQuery, state: FSMContext):
             logger.warning(f"Не удалось удалить сообщение с предпросмотром: {e}")
         
         await callback.message.answer(
-            "✅ Объявление опубликовано в канале!\n"
-            "Спасибо, что пользуешься нашим ботом.",
+            "Товар опубликован! Чтобы вернуться в главное меню напишите /start",
             reply_markup=keyboard
         )
         
@@ -1040,143 +1181,60 @@ async def publish_ad(callback: CallbackQuery, state: FSMContext):
             pass
         
         await callback.message.answer(
-            f"❌ Ошибка при публикации в канале:\n{e}\n"
-            "Пожалуйста, свяжись с администратором.",
+            f"Ошибка при публикации в канале:\n{e}\n"
+            "Пожалуйста, свяжитесь с администратором.",
             reply_markup=main_keyboard
         )
         await state.clear()
 
-@dp.callback_query(StateFilter(AdForm.preview), F.data == "edit_ad")
-async def edit_ad_options(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    await state.set_state(AdForm.edit_choice)
-    
-    await callback.message.answer(
-        "✏️ Что ты хочешь изменить?",
-        reply_markup=get_edit_options_keyboard()
-    )
-
-@dp.callback_query(StateFilter(AdForm.preview), F.data == "cancel_ad")
-async def cancel_ad_from_preview(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    await state.clear()
-    
-    keyboard = admin_keyboard if is_admin(callback.from_user.id) else main_keyboard
-    
-    try:
-        await callback.message.delete()
-    except:
-        pass
-    
-    await callback.message.answer(
-        "❌ Создание объявления отменено.",
-        reply_markup=keyboard
-    )
-
-# ========== ОБРАБОТЧИКИ ИЗМЕНЕНИЯ ОБЪЯВЛЕНИЯ ==========
-
-@dp.callback_query(StateFilter(AdForm.edit_choice), F.data == "back_to_preview")
-async def back_to_preview_from_edit(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    await state.set_state(AdForm.preview)
-    
-    try:
-        await callback.message.delete()
-    except:
-        pass
-    
-    await show_preview(callback.message, state)
-
-@dp.callback_query(StateFilter(AdForm.edit_choice), F.data == "edit_category")
-async def edit_category(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    await state.set_state(AdForm.edit_category)
-    
-    try:
-        await callback.message.delete()
-    except:
-        pass
-    
-    await callback.message.answer(
-        "Выбери новую категорию:",
-        reply_markup=category_keyboard
-    )
-    await callback.message.answer(
-        "Чтобы отменить, нажми кнопку ниже или используй команду /cancel в меню:",
-        reply_markup=cancel_keyboard
-    )
-
-@dp.callback_query(StateFilter(AdForm.edit_choice), F.data == "edit_photos")
+@dp.callback_query(StateFilter(AdForm.preview), F.data == "edit_photos")
 async def edit_photos(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
+    
+    # Удаляем текущий предпросмотр
+    try:
+        await callback.message.delete()
+    except:
+        pass
     
     await state.update_data(photo=None)
     await state.set_state(AdForm.edit_photo)
     
-    try:
-        await callback.message.delete()
-    except:
-        pass
-    
     await callback.message.answer(
-        "📸 Отправь новое фото товара.\n"
-        "Чтобы отменить, используй /cancel в меню.",
-        reply_markup=cancel_keyboard
+        "Отправьте новую фотографию товара, для отмены напишите /cancel"
     )
 
-@dp.callback_query(StateFilter(AdForm.edit_choice), F.data == "edit_description")
+@dp.callback_query(StateFilter(AdForm.preview), F.data == "edit_description")
 async def edit_description(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
+    
+    # Удаляем текущий предпросмотр
+    try:
+        await callback.message.delete()
+    except:
+        pass
+    
     await state.set_state(AdForm.edit_description)
     
-    try:
-        await callback.message.delete()
-    except:
-        pass
-    
     await callback.message.answer(
-        "📝 Напиши новое описание товара.\n"
-        "Чтобы отменить, используй /cancel в меню.",
-        reply_markup=cancel_keyboard
+        "Введите новое описание товара, для отмены напишите /cancel"
     )
 
-@dp.callback_query(StateFilter(AdForm.edit_choice), F.data == "edit_price")
+@dp.callback_query(StateFilter(AdForm.preview), F.data == "edit_price")
 async def edit_price(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
-    await state.set_state(AdForm.edit_price)
     
+    # Удаляем текущий предпросмотр
     try:
         await callback.message.delete()
     except:
         pass
     
+    await state.set_state(AdForm.edit_price)
+    
     await callback.message.answer(
-        "💰 Введи новую цену товара (только цифры).\n"
-        "Чтобы отменить, используй /cancel в меню.",
-        reply_markup=cancel_keyboard
+        "Введите новую цену товара (только цифры), для отмены напишите /cancel"
     )
-
-# ========== ОБРАБОТЧИКИ ДЛЯ РЕДАКТИРОВАНИЯ КАТЕГОРИИ ==========
-
-@dp.callback_query(StateFilter(AdForm.edit_category))
-async def process_category_edit(callback: CallbackQuery, state: FSMContext):
-    global bot_running
-    if not bot_running:
-        await callback.answer("⛔ Бот временно отключен", show_alert=True)
-        return
-    
-    if not await check_subscription(callback.from_user.id):
-        await callback.answer("Подпишись на канал!", show_alert=True)
-        return
-    
-    category = callback.data.replace("cat_", "")
-    await state.update_data(category=category)
-    
-    await callback.message.delete()
-    await callback.message.answer(f"✅ Категория обновлена: {category}")
-    
-    await show_preview(callback.message, state)
-    await callback.answer()
 
 # ========== ОБРАБОТЧИКИ ДЛЯ РЕДАКТИРОВАНИЯ ФОТО ==========
 
@@ -1184,7 +1242,7 @@ async def process_category_edit(callback: CallbackQuery, state: FSMContext):
 async def process_photo_edit(message: Message, state: FSMContext):
     global bot_running
     if not bot_running:
-        await message.answer("⛔ Бот временно отключен администратором. Попробуйте позже.")
+        await message.answer("Бот временно отключен администратором. Попробуйте позже.")
         return
     
     if not await check_subscription(message.from_user.id):
@@ -1194,15 +1252,13 @@ async def process_photo_edit(message: Message, state: FSMContext):
     photo = message.photo[-1]
     await state.update_data(photo=photo.file_id)
     
-    await message.answer("✅ Фото обновлено!")
+    # Сразу показываем предпросмотр без лишних сообщений
     await show_preview(message, state)
 
 @dp.message(StateFilter(AdForm.edit_photo))
 async def photo_error_edit(message: Message):
     await message.answer(
-        "Пожалуйста, отправь фото.\n"
-        "Чтобы отменить, используй /cancel в меню.",
-        reply_markup=cancel_keyboard
+        "Пожалуйста, отправьте фото.\nДля отмены напишите /cancel"
     )
 
 # ========== ОБРАБОТЧИКИ ДЛЯ РЕДАКТИРОВАНИЯ ОПИСАНИЯ ==========
@@ -1211,24 +1267,21 @@ async def photo_error_edit(message: Message):
 async def process_description_edit(message: Message, state: FSMContext):
     if len(message.text) > 400:
         await message.answer(
-            f"❌ Слишком длинное описание! Максимум 400 символов.\n"
+            f"Слишком длинное описание! Максимум 400 символов.\n"
             f"Сейчас: {len(message.text)} символов.\n"
-            "Пожалуйста, сократи описание.\n"
-            "Чтобы отменить, используй /cancel в меню.",
-            reply_markup=cancel_keyboard
+            "Пожалуйста, сократите описание.\nДля отмены напишите /cancel"
         )
         return
     
     await state.update_data(description=message.text)
-    await message.answer("✅ Описание обновлено!")
+    
+    # Сразу показываем предпросмотр без лишних сообщений
     await show_preview(message, state)
 
 @dp.message(StateFilter(AdForm.edit_description))
 async def description_error_edit(message: Message):
     await message.answer(
-        "Пожалуйста, напиши текстовое описание.\n"
-        "Чтобы отменить, используй /cancel в меню.",
-        reply_markup=cancel_keyboard
+        "Пожалуйста, напишите текстовое описание.\nДля отмены напишите /cancel"
     )
 
 # ========== ОБРАБОТЧИКИ ДЛЯ РЕДАКТИРОВАНИЯ ЦЕНЫ ==========
@@ -1239,43 +1292,36 @@ async def process_price_edit(message: Message, state: FSMContext):
     
     if not price.isdigit():
         await message.answer(
-            "❌ Цена должна содержать только цифры!\n"
-            "Пожалуйста, введи цену правильно (например: 1000, 2500).\n"
-            "Чтобы отменить, используй /cancel в меню.",
-            reply_markup=cancel_keyboard
+            "Цена должна содержать только цифры!\n"
+            "Пожалуйста, введите цену правильно (например: 1000, 2500).\nДля отмены напишите /cancel"
         )
         return
     
     if len(price) > 10:
         await message.answer(
-            f"❌ Цена слишком большая! Максимум 10 цифр.\n"
+            f"Цена слишком большая! Максимум 10 цифр.\n"
             f"Сейчас: {len(price)} цифр.\n"
-            "Пожалуйста, введи цену до 10 цифр.\n"
-            "Чтобы отменить, используй /cancel в меню.",
-            reply_markup=cancel_keyboard
+            "Пожалуйста, введите цену до 10 цифр.\nДля отмены напишите /cancel"
         )
         return
     
     if int(price) <= 0:
         await message.answer(
-            "❌ Цена должна быть больше 0!\n"
-            "Пожалуйста, введи корректную цену.\n"
-            "Чтобы отменить, используй /cancel в меню.",
-            reply_markup=cancel_keyboard
+            "Цена должна быть больше 0!\n"
+            "Пожалуйста, введите корректную цену.\nДля отмены напишите /cancel"
         )
         return
     
     await state.update_data(price=price)
-    await message.answer(f"✅ Цена обновлена: {price} ₽")
+    
+    # Сразу показываем предпросмотр без лишних сообщений
     await show_preview(message, state)
 
 @dp.message(StateFilter(AdForm.edit_price))
 async def price_error_edit(message: Message):
     await message.answer(
-        "Пожалуйста, введи цену только цифрами.\n"
-        "Например: 1000, 2500\n"
-        "Чтобы отменить, используй /cancel в меню.",
-        reply_markup=cancel_keyboard
+        "Пожалуйста, введите цену только цифрами.\n"
+        "Например: 1000, 2500\nДля отмены напишите /cancel"
     )
 
 # ========== ОБРАБОТЧИК ВСЕХ ОСТАЛЬНЫХ СООБЩЕНИЙ ==========
@@ -1289,14 +1335,14 @@ async def echo(message: Message, state: FSMContext):
         return
     
     if is_admin(message.from_user.id):
-        await message.answer("Используй кнопки меню:", reply_markup=admin_keyboard)
+        await message.answer("Используйте кнопки меню:", reply_markup=get_admin_keyboard())
     else:
         if not bot_running:
-            await message.answer("⛔ Бот временно отключен администратором. Попробуйте позже.", reply_markup=main_keyboard)
+            await message.answer("Бот временно отключен администратором. Попробуйте позже.", reply_markup=main_keyboard)
             return
         await message.answer(
-            "Нажми '📝 Предложить пост/товар', чтобы создать объявление.\n"
-            "Или используй меню (☰) для команд.",
+            "Нажмите 'Предложить пост/товар', чтобы создать объявление.\n"
+            "Или используйте меню для команд.",
             reply_markup=main_keyboard
         )
 
